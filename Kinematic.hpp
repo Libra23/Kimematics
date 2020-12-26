@@ -40,11 +40,14 @@ class Kinematic {
     void Forward(const Joint& q, const Affine3d& base_trans, Affine3d& tip_trans);
     bool Inverse(const Affine3d& tip_trans, const Affine3d& base_trans, const Joint& init_q, Joint& q);
     double GetControllability() const;
+    double GetStablility() const;
+    void SetConstant(double w, double k);
 
     private:
     KinematicModel model_;
     int num_ik_max_;
-    double w_;
+    double w_, k_;
+    double w_0_, k_0_;
     Affine3d CvtModelToTrans(const std::array<double, 3>& xyz, const std::array<double, 3>& axis, JointType type, double q);
     Jacobian GetJacobian(const Joint& q, const Affine3d& base_trans, const Affine3d& tip_trans);
     Jacobian SingularityLowSensitiveInverse(const Jacobian& jacobian);

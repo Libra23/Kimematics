@@ -1,6 +1,9 @@
 #include "Kinematic.hpp"
 
-Kinematic::Kinematic(){
+Kinematic::Kinematic() : w_(1000.0),
+                         k_(0.0),
+                         w_0_(1000.0),
+                         k_0_(0.0){
 
 }
 
@@ -22,22 +25,38 @@ void Kinematic::Forward(const Joint& q, const Affine3d& base_trans, Affine3d& ti
 bool Kinematic::Inverse(const Affine3d& tip_trans, const Affine3d& base_trans, const Joint& init_q, Joint& q){
     Affine3d tip_trans_d;
     Joint q_d = init_q;
+    Forward(q_d, base_trans, tip_trans_d);
+    
+    // prepare
+    Twist twist = Differentiate(tip_trans, tip_trans_d, 1.0);
+    Jacobian j = GetJacobian(q_d, base_trans, tip_trans_d);
+    #ifdef BLA_H
+    w_ = sqrt((j * ~j).Det());
+    #else
+    w_ = sqrt((j * j.transpose()).determinant());
+    #endif
+    k_ = (w_ >= w_0_) ? 0 : k_0_ * (1 - w_ / w_0_) *  (1 - w_ / w_0_);
     
     int num_ik = 0;
+    double pre_error = 10000.0;
     while (true) {
-        Forward(q_d, base_trans, tip_trans_d);
-        Twist twist = Differentiate(tip_trans, tip_trans_d, 1.0);
-        double error = 0.0;
-        for (int j = 0; j < DOF; j++) {
-            error += twist(j) * twist(j);
-        }
-        error = sqrt(error);
-        if (error < 1e-3) break;
-        Jacobian j = GetJacobian(q_d, base_trans, tip_trans_d);
-        //Joint dq = j.Inverse() * twist;
+        //Jacobian j_inv = j.Inverse();
         Jacobian j_inv = SingularityLowSensitiveInverse(j);
         Joint dq = j_inv * twist;
         q_d += dq;
+        
+        Forward(q_d, base_trans, tip_trans_d);
+        twist = Differentiate(tip_trans, tip_trans_d, 1.0);
+        Joint delta_q = q_d - init_q;
+        double error = 0.0;
+        for (int j = 0; j < DOF; j++) {
+            error += (twist(j) * twist(j) + k_ * delta_q(j) * delta_q(j));
+        }
+        error = sqrt(error);
+        if (fabs(error - pre_error) < 1e-6) break;
+        pre_error = error;
+        
+        j = GetJacobian(q_d, base_trans, tip_trans_d);
         
         num_ik++;
         if (num_ik > num_ik_max_) return false;
@@ -54,8 +73,8 @@ Affine3d Kinematic::CvtModelToTrans(const std::array<double, 3>& xyz, const std:
         double s = sin(q);
         const std::array<double, 3>& n = axis;
         trans.linear() << n[0] * n[0] * (1 - c) + c, n[0] * n[1] * (1 - c) - n[2] * s, n[0] * n[2] * (1 - c) + n[1] * s,
-                            n[0] * n[1] * (1 - c) + n[2] * s, n[1] * n[1] * (1 - c) + c, n[1] * n[2] * (1 - c) - n[0] * s,
-                            n[0] * n[2] * (1 - c) - n[1] * s, n[1] * n[2] * (1 - c) + n[0] * s, n[2] * n[2] * (1 - c) + c;
+                          n[0] * n[1] * (1 - c) + n[2] * s, n[1] * n[1] * (1 - c) + c, n[1] * n[2] * (1 - c) - n[0] * s,
+                          n[0] * n[2] * (1 - c) - n[1] * s, n[1] * n[2] * (1 - c) + n[0] * s, n[2] * n[2] * (1 - c) + c;
     } else {
         trans.translation() << xyz[X], xyz[Y], xyz[Z];
     }
@@ -86,18 +105,10 @@ Jacobian Kinematic::SingularityLowSensitiveInverse(const Jacobian& jacobian) {
     Jacobian jacobian_plus;
     #ifdef BLA_H
     const Jacobian& jacobian_t = ~jacobian;
-    const double k_0 = 0.01;
-    const double w_ = sqrt((jacobian * jacobian_t).Det());
-    const double w_0 = 1000;
-    const double k = (w_ >= w_0) ? 0 : k_0 * (1 - w_ / w_0) *  (1 - w_ / w_0);
-    jacobian_plus = jacobian_t * (jacobian * jacobian_t + IdentityDoF() * k).Inverse();
+    jacobian_plus = jacobian_t * (jacobian * jacobian_t + IdentityDoF() * k_).Inverse();
     #else
     const Jacobian& jacobian_t = jacobian.transpose();
-    const double k_0 = 0.01;
-    const double w_ = sqrt((jacobian * jacobian_t).determinant());
-    const double w_0 = 1000;
-    const double k = (w_ >= w_0) ? 0 : k_0 * (1 - w_ / w_0) *  (1 - w_ / w_0);
-    jacobian_plus = jacobian_t * (jacobian * jacobian_t + IdentityDoF() * k).inverse();
+    jacobian_plus = jacobian_t * (jacobian * jacobian_t + IdentityDoF() * k_).inverse();
     #endif
 
     return jacobian_plus;
@@ -105,6 +116,15 @@ Jacobian Kinematic::SingularityLowSensitiveInverse(const Jacobian& jacobian) {
 
 double Kinematic::GetControllability() const {
     return w_;
+}
+
+double Kinematic::GetStablility() const {
+    return k_;
+}
+
+void Kinematic::SetConstant(double w, double k) {
+    w_0_ = w;
+    k_0_ = k;
 }
 
 Matrix3d MatrixFromRpy(const Vector3d& rpy) {

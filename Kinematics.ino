@@ -23,6 +23,7 @@ void setup() {
                  }};
     model.type = {{ROTATE, ROTATE, ROTATE, FIXED}};
     kinematic_.Config(model);
+    kinematic_.SetConstant(1500.0, 0.1);
 
     Serial.begin(115200);
 }
@@ -31,19 +32,21 @@ void loop() {
   // put your main code here, to run repeatedly:
   Serial.println("Check FK");
   Joint q;
-  q << 45.0, 0.0, 90.0;
+  q << 45.0, 0.0, 0.01;
   q *= DEG_TO_RAD;
   Affine3d tip_trans;
   kinematic_.Forward(q, Affine3d::Identity(), tip_trans);
-  PrintAffine3d(tip_trans);
+  PrintVector3d(tip_trans.translation());
   PrintVector3d(q * RAD_TO_DEG);
   
   Serial.println("Check IK");
   Joint q_pre = q;
-  tip_trans.translation() += Vector3d(20.0 * sin(2 * M_PI * t), 20.0, 20.0);
-  kinematic_.Inverse(tip_trans, Affine3d::Identity(), q_pre, q);
+  const Affine3d tip_trans_pre = tip_trans;
+  tip_trans.translation() = tip_trans_pre.translation() + Vector3d(0.0, 0.0, 0.05);
+  bool ik_ret = kinematic_.Inverse(tip_trans, Affine3d::Identity(), q_pre, q);
   kinematic_.Forward(q, Affine3d::Identity(), tip_trans);
-  PrintAffine3d(tip_trans);
+  Serial.print("IK = ");Serial.println(ik_ret);
+  PrintVector3d(tip_trans.translation());
   PrintVector3d(q * RAD_TO_DEG);
   
   Serial.println("End");
